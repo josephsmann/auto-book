@@ -1,0 +1,201 @@
+name: Manual Noon Court Booking
+
+on:
+  # Run manually only
+  workflow_dispatch:
+    inputs:
+      time:
+        description: 'Booking time (default: 12:00 PM)'
+        required: false
+        default: '12:00 PM'
+        type: string
+      no_player:
+        description: 'Book without additional player (Solo Practice)'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  # Set environment variables from secrets
+  ESC_USERNAME: ${{ secrets.ESC_USERNAME }}
+  ESC_PASSWORD: ${{ secrets.ESC_PASSWORD }}
+
+jobs:
+  book-noon-court:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg unzip xvfb
+
+    - name: Get Chrome version for caching
+      id: chrome-version
+      run: |
+        # Get the latest stable Chrome version for cache key
+        CHROME_VERSION=$(curl -s https://versionhistory.googleapis.com/v1/chrome/platforms/linux/channels/stable/versions | jq -r '.versions[0].version')
+        echo "version=$CHROME_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Cache Google Chrome
+      id: chrome-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          /opt/google/chrome
+          /usr/bin/google-chrome
+          /usr/bin/google-chrome-stable
+        key: chrome-${{ steps.chrome-version.outputs.version }}-${{ runner.os }}
+
+    - name: Install Google Chrome
+      if: steps.chrome-cache.outputs.cache-hit != 'true'
+      run: |
+        # Disable man-db triggers to prevent hanging
+        sudo mv /usr/bin/mandb /usr/bin/mandb.bak 2>/dev/null || true
+
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+
+        # Install Chrome with optimized settings for CI
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get install -y --no-install-recommends google-chrome-stable
+
+        # Restore mandb if it was moved
+        sudo mv /usr/bin/mandb.bak /usr/bin/mandb 2>/dev/null || true
+
+    - name: Cache ChromeDriver
+      id: chromedriver-cache
+      uses: actions/cache@v4
+      with:
+        path: /usr/bin/chromedriver
+        key: chromedriver-${{ steps.chrome-version.outputs.version }}-${{ runner.os }}
+
+    - name: Install ChromeDriver
+      if: steps.chromedriver-cache.outputs.cache-hit != 'true'
+      run: |
+        # Ensure Chrome is available first
+        if ! command -v google-chrome &> /dev/null; then
+          echo "Chrome not found, installing it first..."
+          # Disable man-db triggers to prevent hanging
+          sudo mv /usr/bin/mandb /usr/bin/mandb.bak 2>/dev/null || true
+
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+
+          # Install Chrome with optimized settings for CI
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get install -y --no-install-recommends google-chrome-stable
+
+          # Restore mandb if it was moved
+          sudo mv /usr/bin/mandb.bak /usr/bin/mandb 2>/dev/null || true
+        fi
+
+        # Install ChromeDriver using Chrome for Testing API
+        CHROME_VERSION=$(google-chrome --version | cut -d " " -f3)
+        echo "Chrome version: $CHROME_VERSION"
+
+        # Use Chrome for Testing API to get matching ChromeDriver
+        CHROMEDRIVER_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json" | \
+          jq -r --arg version "$CHROME_VERSION" '.versions[] | select(.version == $version) | .downloads.chromedriver[]? | select(.platform == "linux64") | .url' | head -1)
+
+        if [ -z "$CHROMEDRIVER_URL" ]; then
+          echo "No exact match found for Chrome $CHROME_VERSION, getting latest stable ChromeDriver..."
+          # Get latest stable ChromeDriver
+          CHROMEDRIVER_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json" | \
+            jq -r '.channels.Stable.downloads.chromedriver[]? | select(.platform == "linux64") | .url')
+        fi
+
+        echo "ChromeDriver URL: $CHROMEDRIVER_URL"
+
+        if [ -n "$CHROMEDRIVER_URL" ]; then
+          wget -q "$CHROMEDRIVER_URL" -O chromedriver-linux64.zip
+          unzip chromedriver-linux64.zip
+          sudo mv chromedriver-linux64/chromedriver /usr/bin/chromedriver
+          sudo chmod +x /usr/bin/chromedriver
+          rm -rf chromedriver-linux64 chromedriver-linux64.zip
+        else
+          echo "Failed to get ChromeDriver URL, using webdriver-manager as fallback"
+          pip install webdriver-manager
+          python -c "
+            from webdriver_manager.chrome import ChromeDriverManager
+            import shutil
+            driver_path = ChromeDriverManager().install()
+            shutil.copy(driver_path, '/usr/bin/chromedriver')
+          " && sudo chmod +x /usr/bin/chromedriver
+        fi
+
+        # Verify installation
+        /usr/bin/chromedriver --version
+
+    - name: Cache Python dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}-selenium-dotenv-webdriver
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install selenium python-dotenv webdriver-manager
+
+    - name: Create .env file from secrets
+      run: |
+        echo "ESC_USERNAME=${{ secrets.ESC_USERNAME }}" > .env
+        echo "ESC_PASSWORD=${{ secrets.ESC_PASSWORD }}" >> .env
+
+    - name: Run manual noon court booking
+      run: |
+        # Use xvfb for headless display
+        export DISPLAY=:99
+        Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
+
+        # Determine booking arguments
+        TIME="${{ github.event.inputs.time || '12:00 PM' }}"
+        NO_PLAYER="${{ github.event.inputs.no_player || 'true' }}"
+
+        # Build command with arguments
+        if [ "$NO_PLAYER" = "true" ]; then
+          python github_actions_court_booking.py --days-ahead 1 --time "$TIME" --no-player
+        else
+          python github_actions_court_booking.py --days-ahead 1 --time "$TIME"
+        fi
+      env:
+        # Force headless mode for GitHub Actions
+        GITHUB_ACTIONS: true
+
+    - name: Upload screenshots on success
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: successful-booking-screenshots
+        path: |
+          *.png
+          screenshot*.png
+        retention-days: 3
+
+    - name: Upload screenshots on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-booking-screenshots
+        path: |
+          *.png
+          screenshot*.png
+        retention-days: 7
+
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "❌ Court booking failed! Check the artifacts for screenshots and logs."
+        echo "Time attempted: ${{ github.event.inputs.time || '12:00 PM' }}"
+        echo "No player mode: ${{ github.event.inputs.no_player || 'true' }}"
