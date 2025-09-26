@@ -200,6 +200,18 @@ class GitHubActionsCourtBooker:
             self.take_screenshot("no_slot_any_court.png")
             return False
 
+        # Scroll to make the time slot buttons visible if they're not already
+        print(f"   🔄 Ensuring {self.booking_time} buttons are visible...")
+        for button in target_time_buttons[:1]:  # Just scroll to the first one to make them all visible
+            try:
+                if not button.is_displayed():
+                    print("   📜 Scrolling to make buttons visible...")
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", button)
+                    time.sleep(2)  # Wait for scroll animation
+                    break
+            except:
+                continue
+
         # Try courts 1 through 4
         for court_num in range(1, 5):
             print(f"   Checking Court {court_num}...")
