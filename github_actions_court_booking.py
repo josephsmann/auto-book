@@ -164,6 +164,41 @@ class GitHubActionsCourtBooker:
         """Find and click the specified time slot, trying courts 1-4"""
         print(f"🎯 Looking for {self.booking_time} slot on courts 1-4...")
 
+        # FIRST scroll down the page to reveal later time slots like 5:00 PM on the current (target) date
+        print(f"📜 Scrolling page down to reveal {self.booking_time} time slots...")
+
+        # Try to find a time element that's around 4:00 PM and scroll to it to get closer to 5:00 PM
+        try:
+            # Look for a 4 PM or 3 PM element to scroll to
+            afternoon_element = None
+            for time_to_find in ["4:00 PM", "3:00 PM", "2:30 PM"]:
+                elements = self.driver.find_elements(By.XPATH, f"//*[contains(text(), '{time_to_find}')]")
+                if elements:
+                    afternoon_element = elements[0]
+                    print(f"   Found {time_to_find} element, scrolling to it...")
+                    break
+
+            if afternoon_element:
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'start'});", afternoon_element)
+                time.sleep(3)
+            else:
+                # Fallback: aggressive scrolling
+                print("   No afternoon time found, using aggressive scroll...")
+                for i in range(10):  # Even more aggressive
+                    self.driver.execute_script("window.scrollBy(0, 1200);")
+                    time.sleep(0.3)
+        except:
+            print("   Using fallback scrolling method...")
+            for i in range(10):
+                self.driver.execute_script("window.scrollBy(0, 1200);")
+                time.sleep(0.3)
+
+        self.take_screenshot("after_page_scroll.png")
+
+        # NOW check if we can see our target time after scrolling
+        target_check = self.driver.find_elements(By.XPATH, f"//button[contains(text(), 'Reserve {self.booking_time}')]")
+        print(f"   Debug: After scrolling, found {len(target_check)} buttons for {self.booking_time}")
+
         # First, let's see what buttons are actually available for debugging
         all_buttons = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Reserve')]")
         print(f"   Debug: Found {len(all_buttons)} total Reserve buttons")
@@ -269,24 +304,33 @@ class GitHubActionsCourtBooker:
     def click_button_and_return(self, button, court_num):
         """Helper method to click button and handle the result"""
         try:
-            # Scroll to button first to ensure it's visible
-            print(f"   📜 Scrolling to Court {court_num} button...")
-            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", button)
-            time.sleep(3)  # Wait for scroll animation
-            self.take_screenshot(f"after_scroll_court_{court_num}.png")
+            # The 5:00 PM buttons are visible in the screenshot but is_displayed() might be returning False
+            # Let's try clicking them anyway since we can see them on screen
+            print(f"   ✅ Attempting to click Court {court_num} button (bypassing is_displayed check)...")
 
-            # Check if button is actually visible and interactable after scrolling
-            if not button.is_displayed():
-                print(f"   ❌ Button for Court {court_num} is still not visible after scrolling")
-                return False
+            # Try to click the button directly since it's visible in screenshot
+            try:
+                # Scroll to button first to ensure it's in view
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'instant', block: 'center'});", button)
+                time.sleep(1)
 
-            if not button.is_enabled():
-                print(f"   ❌ Button for Court {court_num} is not enabled")
-                return False
+                # Check visibility after scroll
+                if button.is_displayed():
+                    print(f"   ✅ Button for Court {court_num} is now visible after scroll")
+                else:
+                    print(f"   ⚠️ Button for Court {court_num} still reports not visible, but trying anyway...")
 
-            # Scroll to button and ensure it's visible
-            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", button)
-            time.sleep(2)
+                # Check if enabled
+                if not button.is_enabled():
+                    print(f"   ❌ Button for Court {court_num} is not enabled")
+                    return False
+
+                # Scroll to button and ensure it's visible
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", button)
+                time.sleep(2)
+            except Exception as e:
+                print(f"   ⚠️ Error preparing button for Court {court_num}: {e}")
+                # Continue anyway
 
             # Try multiple click strategies
             try:
