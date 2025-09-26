@@ -200,17 +200,7 @@ class GitHubActionsCourtBooker:
             self.take_screenshot("no_slot_any_court.png")
             return False
 
-        # Scroll to make the time slot buttons visible if they're not already
-        print(f"   🔄 Ensuring {self.booking_time} buttons are visible...")
-        for button in target_time_buttons[:1]:  # Just scroll to the first one to make them all visible
-            try:
-                if not button.is_displayed():
-                    print("   📜 Scrolling to make buttons visible...")
-                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", button)
-                    time.sleep(2)  # Wait for scroll animation
-                    break
-            except:
-                continue
+        # Note: We'll scroll to individual buttons when we try to click them
 
         # Try courts 1 through 4
         for court_num in range(1, 5):
@@ -279,9 +269,15 @@ class GitHubActionsCourtBooker:
     def click_button_and_return(self, button, court_num):
         """Helper method to click button and handle the result"""
         try:
-            # Check if button is actually visible and interactable
+            # Scroll to button first to ensure it's visible
+            print(f"   📜 Scrolling to Court {court_num} button...")
+            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", button)
+            time.sleep(3)  # Wait for scroll animation
+            self.take_screenshot(f"after_scroll_court_{court_num}.png")
+
+            # Check if button is actually visible and interactable after scrolling
             if not button.is_displayed():
-                print(f"   ❌ Button for Court {court_num} is not visible")
+                print(f"   ❌ Button for Court {court_num} is still not visible after scrolling")
                 return False
 
             if not button.is_enabled():
