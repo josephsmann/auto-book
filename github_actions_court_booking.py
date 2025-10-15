@@ -60,7 +60,8 @@ class GitHubActionsCourtBooker:
             chrome_options.add_argument("--disable-extensions")
             chrome_options.add_argument("--disable-plugins")
             chrome_options.add_argument("--disable-images")
-            chrome_options.add_argument("--disable-javascript")
+            # NOTE: JavaScript is REQUIRED for the booking form dropdowns (Kendo UI)
+            # chrome_options.add_argument("--disable-javascript")  # REMOVED - breaks form filling
             chrome_options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
         else:
             # Local development - show browser
