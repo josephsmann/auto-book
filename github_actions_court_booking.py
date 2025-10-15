@@ -313,141 +313,144 @@ class GitHubActionsCourtBooker:
 
         self.take_screenshot("after_page_scroll.png")
 
-        # Look for grid cells that contain "5:00 p.m" text (these provide 45-minute duration automatically)
-        print(f"   🎯 Looking for grid cells containing '{self.booking_time}' text for 45-minute bookings...")
-
-        # Find grid cells that contain "5:00 p.m." text (for 45-minute bookings)
-        # Target specific elements that are more likely to be booking grid cells
-        print("   🎯 Searching specifically for court booking grid cells...")
-
-        # Try different XPath strategies to find the actual booking grid cells
-        grid_cell_patterns = [
-            "//td[contains(text(), '5:00 p.m.')]",
-            "//div[contains(text(), '5:00 p.m.')]",
-            "//td[contains(text(), '5:00 PM')]",
-            "//div[contains(text(), '5:00 PM')]",
-            "//span[contains(text(), '5:00 p.m.')]",
-            "//span[contains(text(), '5:00 PM')]"
-        ]
+        # IMPORTANT: Look for "Reserve" buttons FIRST, not grid cells
+        # Grid cells containing "5:00 p.m." might be already-booked slots like "4:00 p.m. - 5:00 p.m."
+        # which will not open a booking modal when clicked
+        print(f"   🎯 Looking for 'Reserve' buttons for {self.booking_time}...")
 
         clickable_time_cells = []
 
-        for xpath_pattern in grid_cell_patterns:
-            elements = self.driver.find_elements(By.XPATH, xpath_pattern)
-            print(f"   Found {len(elements)} elements with XPath: {xpath_pattern}")
+        # Strategy 1: Find "Reserve X:XX p.m." buttons (most reliable)
+        all_buttons = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Reserve')]")
+        print(f"   Found {len(all_buttons)} total Reserve buttons")
 
-            for element in elements:
-                try:
-                    element_text = element.text.strip()
-                    tag_name = element.tag_name.lower()
+        # Find buttons with our target time
+        target_time_buttons = []
+        for btn in all_buttons:
+            try:
+                btn_text = btn.text.strip()
+                print(f"   Checking button: '{btn_text}'")
 
-                    print(f"   📋 Grid cell candidate: '{element_text[:50]}...' (tag: {tag_name})")
-
-                    # Look for elements that are likely booking cells in table structure
-                    if tag_name in ['td', 'div', 'span'] and element.is_displayed():
-                        # Check if this element has booking-related context
-                        try:
-                            # Get parent context to see if this is in a booking table
-                            parent_text = ""
-                            if tag_name == 'td':
-                                parent_row = element.find_element(By.XPATH, "./ancestor::tr[1]")
-                                parent_text = parent_row.text[:100]
-
-                            print(f"   🏓 Context: '{parent_text}...'")
-
-                            # Add this element if it looks like a booking cell
-                            clickable_time_cells.append(element)
-                            print(f"   ✅ Added grid cell: '{element_text[:30]}...' (tag: {tag_name})")
-
-                        except:
-                            # Even without context, try the element if it matches our criteria
-                            clickable_time_cells.append(element)
-                            print(f"   ✅ Added grid cell (no context): '{element_text[:30]}...'")
-
-                except Exception as e:
-                    print(f"   ⚠️ Error examining grid cell: {e}")
-                    continue
-
-        # If no grid cells found, fallback to Reserve buttons
-        if not clickable_time_cells:
-            print("   🔄 No grid cells found, falling back to Reserve button search...")
-            all_buttons = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Reserve')]")
-            print(f"   Debug: Found {len(all_buttons)} total Reserve buttons")
-
-            # Find buttons with our target time
-            target_time_buttons = []
-            for btn in all_buttons:
-                btn_text = btn.text.strip().lower()
-                if self.booking_time.lower() in btn_text or "5:00" in btn_text:
+                # Match "Reserve 5:00 p.m." or "Reserve 5:00 PM"
+                if "reserve" in btn_text.lower() and "5:00" in btn_text.lower():
                     target_time_buttons.append(btn)
+                    print(f"   ✅ Added Reserve button: '{btn_text}'")
+            except:
+                continue
 
-            if not target_time_buttons:
-                print(f"   ❌ No Reserve buttons found for {self.booking_time}")
+        if target_time_buttons:
+            print(f"   ✅ Found {len(target_time_buttons)} Reserve buttons for {self.booking_time}")
+            clickable_time_cells = target_time_buttons
+        else:
+            # Strategy 2: Fallback to grid cells (less reliable, might click booked slots)
+            print("   ⚠️ No Reserve buttons found, trying grid cell approach...")
+
+            grid_cell_patterns = [
+                "//td[contains(text(), '5:00 p.m.')]",
+                "//div[contains(text(), '5:00 p.m.')]",
+                "//td[contains(text(), '5:00 PM')]",
+                "//div[contains(text(), '5:00 PM')]",
+            ]
+
+            for xpath_pattern in grid_cell_patterns:
+                elements = self.driver.find_elements(By.XPATH, xpath_pattern)
+                for element in elements:
+                    try:
+                        element_text = element.text.strip()
+                        # Skip elements that are clearly already-booked time ranges like "4:00 p.m. - 5:00 p.m."
+                        if "-" in element_text or "." in element_text[len(element_text)-5:]:
+                            print(f"   ⏭️  Skipping booked slot: '{element_text[:50]}'")
+                            continue
+
+                        if element.is_displayed():
+                            clickable_time_cells.append(element)
+                            print(f"   Added grid cell: '{element_text[:30]}'")
+                    except:
+                        continue
+
+            if not clickable_time_cells:
+                print(f"   ❌ No clickable elements found for {self.booking_time}")
                 self.take_screenshot("no_slot_any_court.png")
                 return False
-            else:
-                print(f"   Found {len(target_time_buttons)} Reserve buttons as fallback")
-                clickable_time_cells = target_time_buttons
-        else:
-            print(f"   ✅ Found {len(clickable_time_cells)} clickable 5:00 PM grid cells for 45-minute bookings!")
 
         # Note: We'll scroll to individual buttons when we try to click them
 
-        # Try courts 1 through 4 - now using grid cells instead of just buttons
+        # Determine if we're using buttons or grid cells
+        using_buttons = len(target_time_buttons) > 0
+
+        # Try courts 1 through 4
         for court_num in range(1, 5):
             print(f"   Checking Court {court_num}...")
 
-            # Look through all clickable elements (grid cells or buttons) for our time and find the right court
+            # Look through all clickable elements (Reserve buttons or grid cells)
             for element in clickable_time_cells:
                 try:
-                    # Strategy 1: Check if element itself contains court info
                     element_text = element.text
-                    if f"Court {court_num}" in element_text or f"Court{court_num}" in element_text:
-                        print(f"   Found Court {court_num} via element text: {element_text[:50]}...")
-                        if self.click_grid_cell_and_return(element, court_num):
-                            return True
+                    element_tag = element.tag_name.lower()
 
-                    # Strategy 2: Check table row (tr) ancestor
-                    try:
-                        parent_row = element.find_element(By.XPATH, "./ancestor::tr[1]")
-                        row_text = parent_row.text
-                        if f"Court {court_num}" in row_text or f"Court{court_num}" in row_text:
-                            print(f"   Found Court {court_num} via row context: {element_text[:30]}...")
-                            print(f"   Row text: {row_text[:100]}...")
+                    # For Reserve buttons, check if court name is in row context
+                    if element_tag == "button" and "reserve" in element_text.lower():
+                        # Find parent row to identify which court this is for
+                        try:
+                            parent_row = element.find_element(By.XPATH, "./ancestor::tr[1]")
+                            row_text = parent_row.text
+
+                            # Check if this row is for our target court
+                            if f"Court {court_num}" in row_text or f"Court{court_num}" in row_text or f"Court ({court_num})" in row_text:
+                                print(f"   Found Court {court_num} Reserve button via row context")
+                                print(f"   Row text: {row_text[:100]}...")
+                                if self.click_button_and_return(element, court_num):
+                                    return True
+                        except:
+                            # Try column position if row context fails
+                            try:
+                                parent_cell = element.find_element(By.XPATH, "./ancestor::td[1]")
+                                cell_index = self.driver.execute_script("""
+                                    var cell = arguments[0];
+                                    var row = cell.parentElement;
+                                    return Array.from(row.cells).indexOf(cell);
+                                """, parent_cell)
+
+                                # Courts typically in columns 1-4
+                                if cell_index == court_num:
+                                    print(f"   Found Court {court_num} Reserve button via column {cell_index}")
+                                    if self.click_button_and_return(element, court_num):
+                                        return True
+                            except:
+                                pass
+                    else:
+                        # Grid cell logic (fallback)
+                        if f"Court {court_num}" in element_text:
+                            print(f"   Found Court {court_num} via element text: {element_text[:50]}...")
                             if self.click_grid_cell_and_return(element, court_num):
                                 return True
-                    except:
-                        pass
 
-                    # Strategy 3: Check table cell (td) ancestor
-                    try:
-                        parent_cell = element.find_element(By.XPATH, "./ancestor::td[1]")
-                        # Look for court info in adjacent cells
-                        parent_row = parent_cell.find_element(By.XPATH, "./parent::tr")
-                        row_text = parent_row.text
-                        if f"Court {court_num}" in row_text:
-                            print(f"   Found Court {court_num} via cell context: {element_text[:30]}...")
-                            if self.click_grid_cell_and_return(element, court_num):
-                                return True
-                    except:
-                        pass
+                        # Try row context for grid cells
+                        try:
+                            parent_row = element.find_element(By.XPATH, "./ancestor::tr[1]")
+                            row_text = parent_row.text
+                            if f"Court {court_num}" in row_text:
+                                print(f"   Found Court {court_num} via row context")
+                                if self.click_grid_cell_and_return(element, court_num):
+                                    return True
+                        except:
+                            pass
 
-                    # Strategy 4: Check column position (if courts are in columns)
-                    try:
-                        parent_cell = element.find_element(By.XPATH, "./ancestor::td[1]")
-                        cell_index = self.driver.execute_script("""
-                            var cell = arguments[0];
-                            var row = cell.parentElement;
-                            return Array.from(row.cells).indexOf(cell);
-                        """, parent_cell)
+                        # Try column position for grid cells
+                        try:
+                            parent_cell = element.find_element(By.XPATH, "./ancestor::td[1]")
+                            cell_index = self.driver.execute_script("""
+                                var cell = arguments[0];
+                                var row = cell.parentElement;
+                                return Array.from(row.cells).indexOf(cell);
+                            """, parent_cell)
 
-                        # If courts are in columns 1-4 (after possibly a time column at 0)
-                        if cell_index == court_num:  # Court in column matching court number
-                            print(f"   Found Court {court_num} via column position {cell_index}: {element_text[:30]}...")
-                            if self.click_grid_cell_and_return(element, court_num):
-                                return True
-                    except:
-                        pass
+                            if cell_index == court_num:
+                                print(f"   Found Court {court_num} via column position {cell_index}")
+                                if self.click_grid_cell_and_return(element, court_num):
+                                    return True
+                        except:
+                            pass
 
                 except Exception as e:
                     continue
