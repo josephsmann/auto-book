@@ -10,9 +10,15 @@ on:
         default: '14'
         type: string
 
-  # Run on schedule (example: every day at 6 AM UTC)
+  # Run on schedule at 5:00 PM Mountain Time (Mon/Thu)
   schedule:
-    - cron: '0 23 * * 1,4'  # Daily at 6 AM UTC (adjust timezone as needed)
+    # During MDT (March-November): Monday/Thursday at 11 PM UTC = 5 PM MDT
+    - cron: '0 23 * 3-10 1,4'  # March through October
+    - cron: '0 23 1-7 11 1,4'  # November 1-7 (before DST ends, ~first Sunday)
+    # During MST (November-March): Tuesday/Friday at 12 AM UTC = 5 PM MST (previous day)
+    - cron: '0 0 8-30 11 2,5'  # November 8-30 (after DST ends)
+    - cron: '0 0 * 12-2 2,5'   # December through February
+    - cron: '0 0 1-9 3 2,5'    # March 1-9 (before DST starts, ~second Sunday)
 
 env:
   # Set environment variables from secrets
@@ -151,6 +157,7 @@ jobs:
       run: |
         echo "ESC_USERNAME=${{ secrets.ESC_USERNAME }}" > .env
         echo "ESC_PASSWORD=${{ secrets.ESC_PASSWORD }}" >> .env
+        echo "ESC_ADDITIONAL_PLAYER=${{ secrets.ESC_ADDITIONAL_PLAYER }}" >> .env
 
     - name: Run court booking automation
       run: |
@@ -158,8 +165,10 @@ jobs:
         export DISPLAY=:99
         Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
 
-        # Run the GitHub Actions optimized booking script
-        python github_actions_court_booking.py
+        # Run the smart court booking script
+        # Arguments: <days_ahead> <time> [duration]
+        # Monday/Thursday at 5:00 PM, booking 14 days (2 weeks) in the future
+        python smart_court_booking.py ${{ inputs.days_ahead || '14' }} "5:00 PM" 45
       env:
         # Force headless mode for GitHub Actions
         GITHUB_ACTIONS: true
