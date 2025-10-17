@@ -1,0 +1,83 @@
+name: Trigger Fly.io Court Booking
+
+on:
+  # Run on schedule at 5:00 PM Mountain Time (Mon/Thu)
+  schedule:
+    # During MDT (March-November): Monday/Thursday at 11 PM UTC = 5 PM MDT
+    - cron: '0 23 * 3-10 1,4'  # March through October
+    - cron: '0 23 1-7 11 1,4'  # November 1-7 (before DST ends, ~first Sunday)
+    # During MST (November-March): Tuesday/Friday at 12 AM UTC = 5 PM MST (previous day)
+    - cron: '0 0 8-30 11 2,5'  # November 8-30 (after DST ends)
+    - cron: '0 0 * 12 2,5'     # December
+    - cron: '0 0 * 1-2 2,5'    # January through February
+    - cron: '0 0 1-9 3 2,5'    # March 1-9 (before DST starts, ~second Sunday)
+
+  # Allow manual triggering
+  workflow_dispatch:
+
+jobs:
+  trigger-flyio-booking:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Trigger Fly.io Machine
+      env:
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_APP_NAME: auto-book-courts
+      run: |
+        echo "Triggering Fly.io machine for court booking..."
+
+        # Create a new machine that runs once and auto-destroys
+        RESPONSE=$(curl -s -X POST \
+          -H "Authorization: Bearer $FLY_API_TOKEN" \
+          -H "Content-Type: application/json" \
+          "https://api.machines.dev/v1/apps/$FLY_APP_NAME/machines" \
+          -d '{
+            "config": {
+              "image": "registry.fly.io/'$FLY_APP_NAME':latest",
+              "auto_destroy": true,
+              "restart": {
+                "policy": "no"
+              },
+              "guest": {
+                "cpu_kind": "shared",
+                "cpus": 1,
+                "memory_mb": 1024
+              }
+            }
+          }')
+
+        echo "Response: $RESPONSE"
+
+        # Extract machine ID
+        MACHINE_ID=$(echo $RESPONSE | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+        if [ -z "$MACHINE_ID" ]; then
+          echo "Failed to create machine"
+          exit 1
+        fi
+
+        echo "Machine created with ID: $MACHINE_ID"
+        echo "Machine will auto-destroy after execution completes"
+
+        # Wait a bit and check status
+        sleep 10
+
+        STATUS=$(curl -s \
+          -H "Authorization: Bearer $FLY_API_TOKEN" \
+          "https://api.machines.dev/v1/apps/$FLY_APP_NAME/machines/$MACHINE_ID" | \
+          grep -o '"state":"[^"]*"' | cut -d'"' -f4)
+
+        echo "Machine status: $STATUS"
+
+    - name: Report Success
+      if: success()
+      run: |
+        echo "✅ Successfully triggered court booking on Fly.io"
+        echo "Check logs: flyctl logs -a auto-book-courts"
+
+    - name: Report Failure
+      if: failure()
+      run: |
+        echo "❌ Failed to trigger court booking"
+        echo "Check Fly.io dashboard or run: flyctl status -a auto-book-courts"

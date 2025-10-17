@@ -1,0 +1,34 @@
+# fly.toml app configuration file
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+
+app = "auto-book-courts"
+primary_region = "den"  # Denver region for Mountain Time
+
+[build]
+
+[env]
+  GITHUB_ACTIONS = "true"  # Enable headless mode
+
+[experimental]
+  auto_rollback = true
+
+# This tells Fly.io this is a scheduled machine, not a web service
+[[services]]
+
+# Machine configuration
+[http_service]
+  # No HTTP service needed, this is a scheduled task only
+  auto_stop_machines = "stop"
+  auto_start_machines = false
+  min_machines_running = 0
+
+# Schedule configuration
+# Run every Monday and Thursday at 5:00 PM Mountain Time
+# During MDT (March-November): 5 PM MDT = 11 PM UTC (23:00)
+# During MST (November-March): 5 PM MST = 12 AM UTC next day (00:00)
+
+# Note: Fly.io uses cron syntax, schedule via fly.toml or external scheduler
+# For now, we'll use Fly Machines API with external scheduling
+
+[processes]
+  booking = "python smart_court_booking.py 14 '5:00 PM' 45"
