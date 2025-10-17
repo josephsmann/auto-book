@@ -17,7 +17,8 @@ on:
     - cron: '0 23 1-7 11 1,4'  # November 1-7 (before DST ends, ~first Sunday)
     # During MST (November-March): Tuesday/Friday at 12 AM UTC = 5 PM MST (previous day)
     - cron: '0 0 8-30 11 2,5'  # November 8-30 (after DST ends)
-    - cron: '0 0 * 12-2 2,5'   # December through February
+    - cron: '0 0 * 12 2,5'     # December
+    - cron: '0 0 * 1-2 2,5'    # January through February
     - cron: '0 0 1-9 3 2,5'    # March 1-9 (before DST starts, ~second Sunday)
 
 env:
